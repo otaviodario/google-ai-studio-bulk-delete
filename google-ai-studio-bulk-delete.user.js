@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google AI Studio - Native Batch Deleter
 // @namespace    https://github.com/otaviodario/google-ai-studio-bulk-delete
-// @version      4.1.0
-// @description  Batch deleter with persistent crystal-clear progress tracker, safe delays, and table checkboxes
+// @version      4.2.0
+// @description  Batch deleter with persistent crystal-clear progress tracker, safe delays, and table checkboxes (TrustedHTML & Cross-browser compatible)
 // @author       Otávio Dario (https://github.com/otaviodario)
 // @match        https://aistudio.google.com/library*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=aistudio.google.com
@@ -31,20 +31,44 @@
         });
     };
 
+    // Auxiliar seguro contra 'TrustedHTML' (não usa innerHTML)
+    function createEl(tag, props = {}, ...children) {
+        const el = document.createElement(tag);
+        for (const [key, val] of Object.entries(props)) {
+            if (key === 'className') {
+                el.className = val;
+            } else if (key === 'style' && typeof val === 'object') {
+                Object.assign(el.style, val);
+            } else if (key.startsWith('on') && typeof val === 'function') {
+                el.addEventListener(key.slice(2).toLowerCase(), val);
+            } else if (key === 'disabled') {
+                if (val) el.setAttribute('disabled', '');
+            } else {
+                el.setAttribute(key, val);
+            }
+        }
+        for (const child of children) {
+            if (typeof child === 'string' || typeof child === 'number') {
+                el.appendChild(document.createTextNode(child));
+            } else if (child instanceof Node) {
+                el.appendChild(child);
+            }
+        }
+        return el;
+    }
+
     // --- Injeção de Estilos CSS ---
     function injectStyles() {
         if (document.getElementById('nb-core-styles')) return;
         const style = document.createElement('style');
         style.id = 'nb-core-styles';
         style.textContent = `
-            /* Desativa o desfoque embaçado do Google para o card flutuante ficar 100% nítido */
             .cdk-overlay-backdrop,
             .cdk-overlay-dark-backdrop {
                 backdrop-filter: none !important;
                 -webkit-backdrop-filter: none !important;
             }
 
-            /* Botão Acoplado junto à busca */
             #nb-trigger-wrap {
                 position: relative;
                 display: inline-flex;
@@ -71,7 +95,6 @@
                 border-color: #8ab4f8;
             }
 
-            /* Menu Popover das Ações */
             #nb-modal-popover {
                 position: absolute;
                 top: calc(100% + 8px);
@@ -164,7 +187,6 @@
             }
             .nb-footer a { color: #8ab4f8; text-decoration: none; }
 
-            /* Coluna da Tabela */
             th.nb-table-col, td.nb-table-col {
                 width: 44px !important;
                 min-width: 44px !important;
@@ -183,7 +205,6 @@
                 display: block;
             }
 
-            /* --- CARD FLUTUANTE DE PROGRESSO (SEMPRE NÍTIDO NO CANTO SUPERIOR) --- */
             #nb-running-tracker {
                 position: fixed !important;
                 top: 24px !important;
@@ -265,51 +286,45 @@
         if (document.getElementById('nb-trigger-wrap')) return;
 
         const container = document.querySelector('.header-actions, ms-library-search-bar')?.parentElement
-                       || document.querySelector('.header-container');
+                       || document.querySelector('.header-container')
+                       || document.querySelector('input[placeholder*="Search"]')?.parentElement?.parentElement;
 
         if (!container) return;
 
-        const wrap = document.createElement('div');
-        wrap.id = 'nb-trigger-wrap';
-        wrap.innerHTML = `
-            <button id="nb-trigger-btn">
-                <span>🗑️ Batch Delete</span>
-                <span>▾</span>
-            </button>
-
-            <div id="nb-modal-popover">
-                <div class="nb-popover-header">
-                    <span>Batch Actions</span>
-                    <button class="nb-close-btn" id="nb-popover-close">✕</button>
-                </div>
-
-                <button id="nb-delete-selected" class="nb-btn nb-btn-primary" disabled>
-                    🗑️ Delete Selected (0)
-                </button>
-
-                <div style="display:flex; align-items:center; color:#5f6368; font-size:11px;">
-                    <div style="flex:1; height:1px; background:#3c4043;"></div>
-                    <span style="padding:0 6px;">or by quantity</span>
-                    <div style="flex:1; height:1px; background:#3c4043;"></div>
-                </div>
-
-                <div class="nb-input-row">
-                    <input type="number" id="nb-count-input" class="nb-input" value="10" min="1" max="500">
-                    <select id="nb-order-select" class="nb-select">
-                        <option value="newest">Newest First</option>
-                        <option value="oldest">Oldest First</option>
-                    </select>
-                </div>
-
-                <button id="nb-btn-start" class="nb-btn nb-btn-primary">▶ Start Deletion</button>
-
-                <div class="nb-footer">
-                    Developed by <a href="https://github.com/otaviodario" target="_blank">Otávio Dario</a>
-                    <span>•</span>
-                    <a href="https://github.com/otaviodario/google-ai-studio-bulk-delete" target="_blank">Repo</a>
-                </div>
-            </div>
-        `;
+        const wrap = createEl('div', { id: 'nb-trigger-wrap' },
+            createEl('button', { id: 'nb-trigger-btn' },
+                createEl('span', {}, '🗑️ Batch Delete'),
+                createEl('span', {}, ' ▾')
+            ),
+            createEl('div', { id: 'nb-modal-popover' },
+                createEl('div', { className: 'nb-popover-header' },
+                    createEl('span', {}, 'Batch Actions'),
+                    createEl('button', { className: 'nb-close-btn', id: 'nb-popover-close' }, '✕')
+                ),
+                createEl('button', { id: 'nb-delete-selected', className: 'nb-btn nb-btn-primary', disabled: true },
+                    '🗑️ Delete Selected (0)'
+                ),
+                createEl('div', { style: { display: 'flex', alignItems: 'center', color: '#5f6368', fontSize: '11px' } },
+                    createEl('div', { style: { flex: '1', height: '1px', background: '#3c4043' } }),
+                    createEl('span', { style: { padding: '0 6px' } }, 'or by quantity'),
+                    createEl('div', { style: { flex: '1', height: '1px', background: '#3c4043' } })
+                ),
+                createEl('div', { className: 'nb-input-row' },
+                    createEl('input', { type: 'number', id: 'nb-count-input', className: 'nb-input', value: '10', min: '1', max: '500' }),
+                    createEl('select', { id: 'nb-order-select', className: 'nb-select' },
+                        createEl('option', { value: 'newest' }, 'Newest First'),
+                        createEl('option', { value: 'oldest' }, 'Oldest First')
+                    )
+                ),
+                createEl('button', { id: 'nb-btn-start', className: 'nb-btn nb-btn-primary' }, '▶ Start Deletion'),
+                createEl('div', { className: 'nb-footer' },
+                    'Developed by ',
+                    createEl('a', { href: 'https://github.com/otaviodario', target: '_blank' }, 'Otávio Dario'),
+                    createEl('span', {}, ' • '),
+                    createEl('a', { href: 'https://github.com/otaviodario/google-ai-studio-bulk-delete', target: '_blank' }, 'Repo')
+                )
+            )
+        );
 
         container.appendChild(wrap);
         setupPopoverEvents();
@@ -320,22 +335,20 @@
         let tracker = document.getElementById('nb-running-tracker');
 
         if (!tracker) {
-            tracker = document.createElement('div');
-            tracker.id = 'nb-running-tracker';
-            tracker.innerHTML = `
-                <div class="tracker-title">
-                    <span>⚡ Batch Deleting</span>
-                    <span id="tracker-spinner">⏳</span>
-                </div>
-                <div class="tracker-info">
-                    <span id="tracker-progress" class="tracker-progress-text">Deleting: 0 / 0</span>
-                    <span id="tracker-session-total" class="tracker-total-text">Session deleted: 0</span>
-                </div>
-                <div class="tracker-bar-bg">
-                    <div id="tracker-bar-fill" class="tracker-bar-fill"></div>
-                </div>
-                <button id="tracker-stop-btn" class="tracker-btn-stop">⏹ Stop</button>
-            `;
+            tracker = createEl('div', { id: 'nb-running-tracker' },
+                createEl('div', { className: 'tracker-title' },
+                    createEl('span', {}, '⚡ Batch Deleting'),
+                    createEl('span', { id: 'tracker-spinner' }, '⏳')
+                ),
+                createEl('div', { className: 'tracker-info' },
+                    createEl('span', { id: 'tracker-progress', className: 'tracker-progress-text' }, 'Deleting: 0 / 0'),
+                    createEl('span', { id: 'tracker-session-total', className: 'tracker-total-text' }, 'Session deleted: 0')
+                ),
+                createEl('div', { className: 'tracker-bar-bg' },
+                    createEl('div', { id: 'tracker-bar-fill', className: 'tracker-bar-fill' })
+                ),
+                createEl('button', { id: 'tracker-stop-btn', className: 'tracker-btn-stop' }, '⏹ Stop')
+            );
 
             tracker.querySelector('#tracker-stop-btn').onclick = (e) => {
                 e.preventDefault();
@@ -347,7 +360,6 @@
             document.body.appendChild(tracker);
         }
 
-        // Se houver overlay ativo do Google, anexa direto a ele para garantir visibilidade máxima
         const overlay = document.querySelector('.cdk-overlay-container, div.cdk-overlay-popover');
         const target = overlay || document.body;
 
@@ -393,16 +405,18 @@
     function syncTableCheckboxes() {
         const theadRow = document.querySelector('table.mat-mdc-table thead tr, thead tr[role="row"]');
         if (theadRow && !theadRow.querySelector('.nb-table-col')) {
-            const th = document.createElement('th');
-            th.className = 'nb-table-col mat-mdc-header-cell cdk-header-cell';
-            th.innerHTML = `<input type="checkbox" class="nb-checkbox nb-select-all" title="Select All">`;
+            const masterChk = createEl('input', {
+                type: 'checkbox',
+                className: 'nb-checkbox nb-select-all',
+                title: 'Select All'
+            });
 
-            const masterChk = th.querySelector('input');
             masterChk.addEventListener('change', () => {
                 document.querySelectorAll('.nb-row-chk').forEach(c => (c.checked = masterChk.checked));
                 updateSelectionState();
             });
 
+            const th = createEl('th', { className: 'nb-table-col mat-mdc-header-cell cdk-header-cell' }, masterChk);
             theadRow.insertBefore(th, theadRow.firstChild);
         }
 
@@ -410,14 +424,16 @@
         tbodyRows.forEach(row => {
             if (row.querySelector('.nb-table-col')) return;
 
-            const td = document.createElement('td');
-            td.className = 'nb-table-col mat-mdc-cell cdk-cell';
-            td.innerHTML = `<input type="checkbox" class="nb-checkbox nb-row-chk" title="Select prompt">`;
+            const chk = createEl('input', {
+                type: 'checkbox',
+                className: 'nb-checkbox nb-row-chk',
+                title: 'Select prompt'
+            });
 
-            const chk = td.querySelector('input');
             chk.addEventListener('click', (e) => e.stopPropagation());
             chk.addEventListener('change', updateSelectionState);
 
+            const td = createEl('td', { className: 'nb-table-col mat-mdc-cell cdk-cell' }, chk);
             row.insertBefore(td, row.firstChild);
         });
     }
@@ -446,7 +462,7 @@
 
         // 1. Abre o menu de opções da linha
         moreBtn.click();
-        await sleep(500); // Aguarda animação de abertura do menu
+        await sleep(500);
 
         if (!isRunning) {
             document.body.click();
@@ -465,7 +481,7 @@
         }
 
         deleteOption.click();
-        await sleep(600); // Aguarda o modal de confirmação do Google carregar
+        await sleep(600);
 
         if (!isRunning) return false;
 
@@ -488,7 +504,7 @@
             }
 
             totalDeletedSession++;
-            await sleep(800); // Intervalo de estabilização do banco de dados antes da próxima linha
+            await sleep(800);
             return true;
         }
 
@@ -504,6 +520,8 @@
         const closeBtn = document.getElementById('nb-popover-close');
         const deleteSelectedBtn = document.getElementById('nb-delete-selected');
         const startBtn = document.getElementById('nb-btn-start');
+
+        if (!trigger || !popover) return;
 
         trigger.onclick = (e) => {
             e.stopPropagation();
