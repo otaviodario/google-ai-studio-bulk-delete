@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Google AI Studio - Native Batch Deleter
 // @namespace    https://github.com/otaviodario/google-ai-studio-bulk-delete
-// @version      4.2.0
+// @version      4.3.0
 // @description  Batch deleter with persistent crystal-clear progress tracker, safe delays, and table checkboxes (TrustedHTML & Cross-browser compatible)
 // @author       Otávio Dario (https://github.com/otaviodario)
-// @match        https://aistudio.google.com/library*
+// @match        https://aistudio.google.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=aistudio.google.com
 // @grant        none
 // @run-at       document-idle
@@ -15,8 +15,16 @@
 
     let isRunning = false;
     let totalDeletedSession = 0;
+    const selectedRowKeys = new Set(); // Memória global para checkboxes
 
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    function getRowKey(row) {
+        if (!row) return null;
+        // Retira os espaços em branco extras para criar uma chave única baseada no texto da linha
+        let text = row.textContent || row.innerText || "";
+        return text.replace(/\s+/g, ' ').trim();
+    }
 
     const waitForElement = (selector, timeout = 4000) => {
         return new Promise((resolve) => {
@@ -412,7 +420,16 @@
             });
 
             masterChk.addEventListener('change', () => {
-                document.querySelectorAll('.nb-row-chk').forEach(c => (c.checked = masterChk.checked));
+                const isChecked = masterChk.checked;
+                document.querySelectorAll('.nb-row-chk').forEach(c => {
+                    c.checked = isChecked;
+                    const row = c.closest('tr');
+                    const key = getRowKey(row);
+                    if (key) {
+                        if (isChecked) selectedRowKeys.add(key);
+                        else selectedRowKeys.delete(key);
+                    }
+                });
                 updateSelectionState();
             });
 
@@ -422,7 +439,18 @@
 
         const tbodyRows = document.querySelectorAll('table.mat-mdc-table tbody tr.mat-mdc-row, tbody tr[role="row"]');
         tbodyRows.forEach(row => {
-            if (row.querySelector('.nb-table-col')) return;
+            const existingCol = row.querySelector('.nb-table-col');
+            const key = getRowKey(row);
+
+            if (existingCol) {
+                // Restaura o estado visual caso o framework tenha re-renderizado as propriedades da linha
+                const existingChk = existingCol.querySelector('.nb-row-chk');
+                if (existingChk && key && selectedRowKeys.has(key) && !existingChk.checked) {
+                    existingChk.checked = true;
+                    updateSelectionState();
+                }
+                return;
+            }
 
             const chk = createEl('input', {
                 type: 'checkbox',
@@ -430,8 +458,20 @@
                 title: 'Select prompt'
             });
 
+            // Resgata o estado salvo ao criar nova checkbox
+            if (key && selectedRowKeys.has(key)) {
+                chk.checked = true;
+            }
+
             chk.addEventListener('click', (e) => e.stopPropagation());
-            chk.addEventListener('change', updateSelectionState);
+            chk.addEventListener('change', () => {
+                const currentKey = getRowKey(row);
+                if (currentKey) {
+                    if (chk.checked) selectedRowKeys.add(currentKey);
+                    else selectedRowKeys.delete(currentKey);
+                }
+                updateSelectionState();
+            });
 
             const td = createEl('td', { className: 'nb-table-col mat-mdc-cell cdk-cell' }, chk);
             row.insertBefore(td, row.firstChild);
@@ -608,13 +648,76 @@
         };
     }
 
-    // --- Ciclo de Vida da Biblioteca ---
-    setInterval(() => {
-        if (!window.location.pathname.toLowerCase().startsWith('/library')) return;
+    // --- Ciclo de Vida da Biblioteca (SPA Router API & UI Enforcer) ---
+    let uiEnforcerInterval = null;
+    let lastKnownPath = '';
 
-        injectStyles();
-        injectHeaderTrigger();
-        ensureRunningTracker();
-        syncTableCheckboxes();
-    }, 600);
+    function stopUiEnforcer() {
+        if (uiEnforcerInterval) {
+            clearInterval(uiEnforcerInterval);
+            uiEnforcerInterval = null;
+        }
+        selectedRowKeys.clear();
+        isRunning = false;
+        const tracker = document.getElementById('nb-running-tracker');
+        if (tracker) tracker.style.display = 'none';
+
+        // Esconde os popovers se o usuário mudar de tela com eles abertos
+        const popover = document.getElementById('nb-modal-popover');
+        if (popover) popover.classList.remove('open');
+    }
+
+    function startUiEnforcer() {
+        if (uiEnforcerInterval) return; // Se já está monitorando, não duplica
+
+        // Loop de garantia: Roda a cada 400ms para assegurar que a UI seja injetada
+        // assim que o Google terminar de carregar os elementos do banco de dados.
+        uiEnforcerInterval = setInterval(() => {
+            // Se saiu da rota (via botão 'back' do mouse rápido), desativa
+            if (!window.location.pathname.toLowerCase().startsWith('/library')) {
+                stopUiEnforcer();
+                return;
+            }
+
+            // Injeta o CSS, Botões e Checkboxes.
+            // As funções internas possuem "if(existe) return", logo não haverá duplicatas.
+            injectStyles();
+            injectHeaderTrigger();
+            ensureRunningTracker();
+            syncTableCheckboxes();
+        }, 400);
+    }
+
+    function handleUrlChange() {
+        const currentPath = window.location.pathname.toLowerCase();
+        if (currentPath !== lastKnownPath) {
+            lastKnownPath = currentPath;
+
+            if (currentPath.startsWith('/library')) {
+                // Inicia o loop de injeção agressiva assim que entra no histórico
+                startUiEnforcer();
+            } else {
+                stopUiEnforcer();
+            }
+        }
+    }
+
+    // 1. Intercepta navegação via cliques internos da plataforma (Angular Router)
+    const originalPushState = history.pushState;
+    history.pushState = function() {
+        originalPushState.apply(this, arguments);
+        handleUrlChange();
+    };
+
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function() {
+        originalReplaceState.apply(this, arguments);
+        handleUrlChange();
+    };
+
+    // 2. Intercepta botões físicos de Voltar/Avançar do navegador
+    window.addEventListener('popstate', handleUrlChange);
+
+    // 3. Inicializa o estado atual (para quando o usuário acessa direto via link ou F5)
+    handleUrlChange();
 })();
